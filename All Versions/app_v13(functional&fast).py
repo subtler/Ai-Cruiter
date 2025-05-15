@@ -13,9 +13,9 @@ from langchain_community.document_loaders import TextLoader, PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from sklearn.metrics.pairwise import cosine_similarity
 
+
 # ─── CONFIG & SETUP ────────────────────────────────────────────────────────────
-# --- CONFIG & SETUP ---
-os.environ["PINECONE_API_KEY"] = "pcsk_6ANMxB_NBF6TZziCKrn6kWNDskfdQzUj5GU7AJYtFWkWwsRefuXBdrJxRSxrvRe1Y2Nbi2"  # <-- Replace with your key
+os.environ["PINECONE_API_KEY"] = "your-pinecone-api-key"  # ← replace!
 pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
 
 RESUME_INDEX = "resume-index"

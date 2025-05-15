@@ -12,7 +12,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from sklearn.metrics.pairwise import cosine_similarity
 
 # ─── CONFIG & SETUP ────────────────────────────────────────────────────────────
-os.environ["PINECONE_API_KEY"] = "your-pinecone-api-key"  # ← replace with your key
+os.environ["PINECONE_API_KEY"] = "your-pinecone-api-key"  # ← replace!
 pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
 
 
