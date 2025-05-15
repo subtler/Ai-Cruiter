@@ -72,6 +72,13 @@ A smart, AI-powered resume matcher that extracts skills from job descriptions an
 
 ---
 
+## 🎥 Demo
+
+Watch Ai-Cruiter in action — from uploading a Job Description to ranking resumes using skill extraction and semantic similarity.
+▶️ **[Click to watch the demo](demo_video/Ai-Cruiter-demo.webm)**
+> If the video doesn’t auto-play on GitHub, you can download it or use VLC to view locally.
+
+
 ## ⚙️ Getting Started
 
 Installation & Setup
