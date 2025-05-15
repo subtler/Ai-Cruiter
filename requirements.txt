@@ -1,0 +1,13 @@
+streamlit>=1.32.0
+pandas>=2.0.0
+pinecone-client>=3.0.0
+transformers>=4.39.0
+torch>=2.0.0
+scikit-learn>=1.4.0
+langchain>=0.1.14
+langchain-community>=0.0.32
+langchain-pinecone>=0.0.3
+langchain-huggingface>=0.0.5
+sentence-transformers>=2.5.1
+pdfminer.six>=20221105
+pypdf>=3.17.1

@@ -9,3 +9,14 @@ venv/
 node_modules/
 .env.local
 *.DS_Store
+__pycache__/
+*.pyc
+*.ipynb_checkpoints
+.env
+venv/
+*.sqlite3
+*.db
+*.log
+node_modules/
+.env.local
+*.DS_Store
