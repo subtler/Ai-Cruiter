@@ -1,5 +1,6 @@
 
 import os
+from dotenv import load_dotenv
 import tempfile
 import streamlit as st
 import pandas as pd
@@ -14,9 +15,10 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from sklearn.metrics.pairwise import cosine_similarity
 
 
+load_dotenv()
 # ─── CONFIG & SETUP ────────────────────────────────────────────────────────────
-os.environ["PINECONE_API_KEY"] = "your-pinecone-api-key"  # ← replace!
-pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+api_key = os.getenv("PINECONE_API_KEY")
+pc = Pinecone(api_key=api_key)
 
 RESUME_INDEX = "resume-index"
 JD_INDEX     = "jd-index"

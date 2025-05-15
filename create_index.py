@@ -1,11 +1,13 @@
 # create_indexes.py
 
 import os
+from dotenv import load_dotenv
 from pinecone import Pinecone, ServerlessSpec
 
-# ─── Configuration ────────────────────────────────────────────────────────────
-# You can also set the API key as an environment variable externally
-os.environ["PINECONE_API_KEY"] = "pcsk_6ANMxB_NBF6TZziCKrn6kWNDskfdQzUj5GU7AJYtFWkWwsRefuXBdrJxRSxrvRe1Y2Nbi2"
+load_dotenv()
+# ─── CONFIG & SETUP ────────────────────────────────────────────────────────────
+api_key = os.getenv("PINECONE_API_KEY")
+pc = Pinecone(api_key=api_key)
 
 API_KEY    = os.getenv("PINECONE_API_KEY")
 DIMENSION  = 384          # for all-MiniLM-L6-v2 embeddings

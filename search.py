@@ -1,13 +1,16 @@
 import os
+from dotenv import load_dotenv
 from langchain_huggingface import HuggingFaceEmbeddings, HuggingFacePipeline
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 from langchain.chains import RetrievalQA
 
-# Setup
-os.environ["PINECONE_API_KEY"] = "pcsk_6ANMxB_NBF6TZziCKrn6kWNDskfdQzUj5GU7AJYtFWkWwsRefuXBdrJxRSxrvRe1Y2Nbi2"
-pc = Pinecone()
+load_dotenv()
+# ─── CONFIG & SETUP ────────────────────────────────────────────────────────────
+api_key = os.getenv("PINECONE_API_KEY")
+pc = Pinecone(api_key=api_key)
+
 index_name = "resume-index"
 
 # Load embedding model + vectorstore

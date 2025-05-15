@@ -11,3 +11,4 @@ langchain-huggingface>=0.0.5
 sentence-transformers>=2.5.1
 pdfminer.six>=20221105
 pypdf>=3.17.1
+python-dotenv
