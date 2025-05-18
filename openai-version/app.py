@@ -1,5 +1,6 @@
 import os
 import json
+import statistics
 from dotenv import load_dotenv
 import streamlit as st
 # --- Load persisted resume metadata from disk ---
@@ -133,11 +134,18 @@ resume_vstore = PineconeVectorStore(index=resume_index, embedding=embeddings)
 jd_vstore     = PineconeVectorStore(index=jd_index,     embedding=embeddings)
 
 # 7. Build the conversational QA chain
-memory   = ConversationSummaryMemory(llm=llm)
+memory   = ConversationSummaryMemory(
+    llm=llm,
+    memory_key="chat_history",
+    return_messages=True,
+    output_key="answer"
+)
 qa_chain = ConversationalRetrievalChain.from_llm(
     llm=llm,
     retriever=resume_vstore.as_retriever(search_kwargs={"k": 3}),
-    memory=memory
+    memory=memory,
+    return_source_documents=True,
+    verbose=True
 )
 
 #
@@ -298,6 +306,23 @@ with tabs[1]:
                 st.experimental_rerun()
 
 
+
+# Chain to extract targeted bullet points from resume passages
+extract_chain = LLMChain(
+    llm=llm,
+    prompt=PromptTemplate(
+        input_variables=["passages", "topic"],
+        template="""
+You are an expert at scanning resumes. Given the following resume passages:
+
+{passages}
+
+Extract bullet points specifically about the candidate's experience with {topic}.  
+Return each bullet prefixed with a dash.
+"""
+    )
+)
+
 # Library Tab: Uploaded Resumes
 with tabs[2]:
     st.header("Library: Uploaded Resumes")
@@ -306,8 +331,23 @@ with tabs[2]:
     st.write(f"Total resumes uploaded: **{count}**")
     if count > 0:
         st.write("**Resume Files:**")
-        for source in resume_meta.keys():
-            st.write(f"- {source}")
+        for source in list(resume_meta.keys()):
+            cols = st.columns([5, 1])
+            with cols[0]:
+                st.write(f"- {source}")
+            with cols[1]:
+                # Delete button for each resume
+                if st.button("Delete", key=f"del_{source}"):
+                    try:
+                        # Delete all vectors with this source_file metadata
+                        resume_index.delete(delete_all=True, filter={"source_file": source})
+                        # Remove from session state and disk
+                        st.session_state["resume_metadata"].pop(source, None)
+                        with open(METADATA_PATH, "w") as f:
+                            json.dump(st.session_state["resume_metadata"], f)
+                        st.success(f"Removed resume '{source}' and its vectors.")
+                    except PineconeApiException as e:
+                        st.error(f"Error deleting resume '{source}': {e}")
     else:
         st.info("No resumes uploaded yet. Please ingest in the sidebar.")
 
