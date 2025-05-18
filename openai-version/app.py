@@ -5,6 +5,8 @@ import json
 import tempfile
 import pandas as pd
 from pinecone.openapi_support.exceptions import PineconeApiException
+import re
+from difflib import SequenceMatcher
 
 # Initialize shortlist storage
 if 'shortlists' not in st.session_state:
@@ -102,6 +104,20 @@ Resume:
             metadata[key] = str(val)
     return metadata
 
+# Fuzzy match helper
+def fuzzy_match_list(jd_list, res_list, threshold=0.8):
+    """Return list of resume items that fuzzy-match any JD item above threshold."""
+    matches = set()
+    jd_norm = [j.lower().strip() for j in jd_list]
+    res_norm = [r.lower().strip() for r in res_list]
+    for jd in jd_norm:
+        for res in res_norm:
+            # exact substring or fuzzy ratio
+            ratio = SequenceMatcher(None, jd, res).ratio()
+            if jd in res or res in jd or ratio >= threshold:
+                matches.add(res)
+    return list(matches)
+
 # 6. Wrap Pinecone indexes in LangChain vectorstores
 resume_index = pc.Index(INDEX_RESUME)
 jd_index     = pc.Index(INDEX_JD)
@@ -127,60 +143,73 @@ tabs = st.tabs(["🧑‍💼 Recruiter Mode", "👤 Candidate Mode", "🔧 Admin
 with tabs[0]:
     st.header("Recruiter Mode")
 
-    # Search naming and loading
-    search_name = st.text_input("Search Name:", key="search_name")
-    saved_searches = list(st.session_state['shortlists'].keys())
-    load_option = st.selectbox("Load Saved Search", [""] + saved_searches, key="load_option")
-    if load_option:
-        selected = st.session_state['shortlists'][load_option]
-        st.write(f"Shortlisted candidates for '{load_option}':")
-        st.write(selected)
-
     jd_input = st.text_area("Paste a Job Description (JD):", height=200)
-    if st.button("Find Matching Resumes", key="find_resumes"):
+    if st.button("Find Matching Resumes"):
         if not jd_input.strip():
             st.warning("Please paste a Job Description to search.")
         else:
-            with st.spinner("Searching resumes..."):
-                raw_results = resume_vstore.similarity_search_with_score(jd_input, k=50)
-                # Group by source_file
-                grouped = {}
-                for doc, score in raw_results:
-                    source = doc.metadata.get('source_file', 'Unknown')
-                    if source not in grouped:
-                        grouped[source] = {"best_score": score, "chunks": [(doc, score)]}
-                    else:
-                        grouped[source]["chunks"].append((doc, score))
-                        # Update best score if this chunk is better
-                        if score > grouped[source]["best_score"]:
-                            grouped[source]["best_score"] = score
+            # Ensure resumes have been ingested
+            resume_meta = st.session_state.get("resume_metadata", {})
+            if not resume_meta:
+                st.error("No resumes have been ingested yet. Please go to the Admin tab and ingest resumes first.")
+                st.stop()
 
-                # Build a list of resumes sorted by best_score
-                entries = sorted(grouped.items(), key=lambda x: x[1]["best_score"], reverse=True)[:10]
+            # Retrieve semantic (cosine) scores from Pinecone
+            raw_semantic = resume_vstore.similarity_search_with_score(jd_input, k=50)
+            # Group by source and track best semantic score per resume
+            sem_scores = {}
+            for doc, score in raw_semantic:
+                src = doc.metadata.get("source_file", "Unknown")
+                sem_scores[src] = max(score, sem_scores.get(src, 0))
 
-                # Build DataFrame
-                data = []
-                for source, info in entries:
-                    skills = ", ".join(info["chunks"][0][0].metadata.get('skills', []))
-                    tools = ", ".join(info["chunks"][0][0].metadata.get('tools', []))
-                    exp_years = info["chunks"][0][0].metadata.get('experience_years', None)
-                    data.append({
-                        "Source": source,
-                        "Score": round(info["best_score"], 4),
-                        "Skills": skills,
-                        "Tools": tools,
-                        "Experience": exp_years
-                    })
-                df = pd.DataFrame(data)
-                st.dataframe(df)
+            # Extract JD metadata for meta scoring
+            jd_meta = extract_resume_metadata(jd_input)
+            jd_skills = set(jd_meta.get("skills", []))
+            jd_tools  = set(jd_meta.get("tools", []))
+            try:
+                jd_exp_val = float(jd_meta.get("experience_years", 0))
+            except:
+                jd_exp_val = 0.0
 
-                # Inline expanders: show all chunks per resume
-                for source, info in entries:
-                    with st.expander(f"{source} (Best Score: {info['best_score']:.4f})"):
-                        for doc, score in info["chunks"]:
-                            st.write(f"• Score: {score:.4f}")
-                            st.write(doc.page_content)
-                            st.write("---")
+            w_skill, w_tool, w_exp = 0.5, 0.3, 0.2  # weights inside the 30% meta portion
+            w_semantic, w_meta = 0.7, 0.3
+
+            # Build combined scores
+            data = []
+            for src, meta in resume_meta.items():
+                # Semantic component
+                sem_score = sem_scores.get(src, 0.0)
+
+                # Metadata component
+                res_skills = set(meta.get("skills", []))
+                res_tools  = set(meta.get("tools", []))
+                try:
+                    res_exp_val = float(meta.get("experience_years", 0))
+                except:
+                    res_exp_val = 0.0
+
+                matched_skills = fuzzy_match_list(jd_meta.get("skills", []), meta.get("skills", []))
+                matched_tools  = fuzzy_match_list(jd_meta.get("tools", []),  meta.get("tools", []))
+                skill_score = len(matched_skills) / (len(jd_skills) or 1)
+                tool_score  = len(matched_tools)  / (len(jd_tools)  or 1)
+                exp_score   = min(res_exp_val / jd_exp_val, 1.0) if jd_exp_val>0 else 1.0
+
+                meta_score = w_skill*skill_score + w_tool*tool_score + w_exp*exp_score
+
+                # Combined score
+                total_score = w_semantic*sem_score + w_meta*meta_score
+
+                data.append({
+                    "Source": src,
+                    "Score": round(total_score, 4),
+                    "Skills Matched": ", ".join(matched_skills),
+                    "Tools Matched":  ", ".join(matched_tools),
+                    "Experience Match": f"{res_exp_val} yrs"
+                })
+
+            # Display sorted table
+            df = pd.DataFrame(sorted(data, key=lambda x: x["Score"], reverse=True))
+            st.dataframe(df)
 
 # Candidate Mode: generate JD & roles from resume
 from langchain import PromptTemplate
@@ -212,11 +241,49 @@ with tabs[1]:
 
             # Generate using cached function
             output = generate_roles_and_jd(full_text)
-            st.markdown("**Generated Job Description & Roles:**")
-            st.write(output)
+
+            # Robustly extract job description and roles
+            # Attempt to capture between 'Job Description:' and 'Possible Job Titles:'
+            desc_match = re.search(r"Job Description:\s*(.*?)\s*Possible Job Titles:", output, re.S)
+            if desc_match:
+                job_desc = desc_match.group(1).strip()
+                roles_section = output.split("Possible Job Titles:")[-1]
+            else:
+                # Fallback: first line after the colon
+                lines = [l.strip() for l in output.split("\n") if l.strip()]
+                if lines and ":" in lines[0]:
+                    job_desc = lines[0].split(":",1)[1].strip()
+                    roles_section = "\n".join(lines[1:])
+                else:
+                    job_desc = output.strip()
+                    roles_section = ""
+
+            # Extract roles as numbered entries, skipping empty entries
+            roles = []
+            for line in roles_section.split("\n"):
+                m = re.match(r"\s*\d+\.\s*(.*)", line)
+                if m:
+                    role = m.group(1).strip()
+                    if role:  # only append non-empty role text
+                        roles.append(role)
+
+            # Remove any stray numeric-only lines (e.g., "2.")
+            job_desc = "\n".join(
+                line for line in job_desc.split("\n")
+                if not re.match(r"^\s*\d+\.\s*$", line)
+            )
+            # Display in two-column split
+            cols = st.columns([2, 1])
+            with cols[0]:
+                st.subheader("📋 Job Description")
+                st.write(job_desc)
+            with cols[1]:
+                st.subheader("🎯 Suggested Roles")
+                for role in roles:
+                    st.write(f"- {role}")
 
             # Button to reset for a new resume
-            if st.button("New Resume"):
+            if st.button("New Resume", key="new_resume"):
                 st.session_state["candidate_resume"] = None
                 st.experimental_rerun()
 
@@ -261,6 +328,10 @@ with tabs[2]:
                     # Extract structured metadata once per resume
                     metadata = extract_resume_metadata(full_text)
                     metadata['source_file'] = uploaded_file.name
+                    # Store resume-wide metadata in session_state for recruiter mode
+                    if 'resume_metadata' not in st.session_state:
+                        st.session_state['resume_metadata'] = {}
+                    st.session_state['resume_metadata'][uploaded_file.name] = metadata
                     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
                     chunks = splitter.split_documents(docs)
                     total_chunks += len(chunks)
