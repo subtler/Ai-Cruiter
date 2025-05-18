@@ -138,10 +138,29 @@ qa_chain = ConversationalRetrievalChain.from_llm(
 st.title("Ai-Cruiter: Resume & JD Assistant 🤖💼")
 
 # Main Modes
-tabs = st.tabs(["🧑‍💼 Recruiter Mode", "👤 Candidate Mode", "🔧 Admin"])
+tabs = st.tabs(["🧑‍💼 Recruiter Mode", "👤 Candidate Mode", "📚 Library"])
 
 with tabs[0]:
     st.header("Recruiter Mode")
+
+    # List all uploaded resumes for transparency
+    st.subheader("Uploaded Resumes")
+    resume_meta = st.session_state.get("resume_metadata", {})
+    if resume_meta:
+        for source, meta in resume_meta.items():
+            with st.expander(source):
+                # Display key metadata fields
+                st.markdown(f"- **Skills:** {', '.join(meta.get('skills', []))}")
+                st.markdown(f"- **Tools:** {', '.join(meta.get('tools', []))}")
+                st.markdown(f"- **Experience (yrs):** {meta.get('experience_years', 'N/A')}")
+                if meta.get('education'):
+                    st.markdown(f"- **Education:** {', '.join(meta.get('education', []))}")
+                if meta.get('certifications'):
+                    st.markdown(f"- **Certifications:** {', '.join(meta.get('certifications', []))}")
+    else:
+        st.info("No resumes uploaded yet. Please ingest in the Admin tab.")
+
+    st.markdown("---")
 
     jd_input = st.text_area("Paste a Job Description (JD):", height=200)
     if st.button("Find Matching Resumes"):
@@ -287,86 +306,97 @@ with tabs[1]:
                 st.session_state["candidate_resume"] = None
                 st.experimental_rerun()
 
-# Admin Panel: ingestion & reset
+
+# Library Tab: Uploaded Resumes
 with tabs[2]:
-    st.subheader("Upload & Ingest Documents")
-    # Ingestion UI (reuse existing sidebar ingestion code here)
-    admin_uploaded_files = st.file_uploader(
-        "Upload PDF or TXT files",
-        type=["pdf", "txt"],
-        accept_multiple_files=True,
-        key="admin_docs_upload"
-    )
-    # Let user pick the actual Pinecone index names from the .env
-    index_choice = st.selectbox(
-        "Select index to ingest into",
-        (INDEX_RESUME, INDEX_JD),
-        label_visibility="visible"
-    )
-    st.write(f"Ingesting into Pinecone index: **{index_choice}**")
-    if st.button("Ingest to Index"):
-        if not admin_uploaded_files:
-            st.warning("Please upload at least one file.")
-        else:
-            with st.spinner("Ingesting documents..."):
-                total_chunks = 0
-                for uploaded_file in admin_uploaded_files:
-                    # Write streamlit UploadedFile to a temporary file
-                    suffix = os.path.splitext(uploaded_file.name)[1]
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
-                        tmp_file.write(uploaded_file.read())
-                        temp_path = tmp_file.name
+    st.header("Library: Uploaded Resumes")
+    resume_meta = st.session_state.get("resume_metadata", {})
+    if resume_meta:
+        for source, meta in resume_meta.items():
+            with st.expander(source):
+                st.markdown(f"- **Skills:** {', '.join(meta.get('skills', []))}")
+                st.markdown(f"- **Tools:** {', '.join(meta.get('tools', []))}")
+                st.markdown(f"- **Experience (yrs):** {meta.get('experience_years', 'N/A')}")
+                if meta.get('education'):
+                    st.markdown(f"- **Education:** {', '.join(meta.get('education', []))}")
+                if meta.get('certifications'):
+                    st.markdown(f"- **Certifications:** {', '.join(meta.get('certifications', []))}")
+    else:
+        st.info("No resumes uploaded yet. Please ingest in the sidebar.")
 
-                    # Use the temp file path for the loader
-                    if uploaded_file.name.lower().endswith(".pdf"):
-                        loader = PyPDFLoader(temp_path)
-                    else:
-                        loader = TextLoader(temp_path)
 
-                    docs = loader.load()
-                    full_text = "\n".join([d.page_content for d in docs])
-                    # Extract structured metadata once per resume
-                    metadata = extract_resume_metadata(full_text)
-                    metadata['source_file'] = uploaded_file.name
-                    # Store resume-wide metadata in session_state for recruiter mode
-                    if 'resume_metadata' not in st.session_state:
-                        st.session_state['resume_metadata'] = {}
-                    st.session_state['resume_metadata'][uploaded_file.name] = metadata
-                    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-                    chunks = splitter.split_documents(docs)
-                    total_chunks += len(chunks)
-                    # Attach metadata to each chunk
-                    for chunk in chunks:
-                        if chunk.metadata is None:
-                            chunk.metadata = {}
-                        chunk.metadata.update(metadata)
-                    vstore = resume_vstore if index_choice == INDEX_RESUME else jd_vstore
-                    try:
-                        vstore.add_documents(chunks)
-                    except PineconeApiException as e:
-                        st.error(f"Failed to ingest vectors: {e}. This usually means your index dimension ({INDEX_RESUME} or {INDEX_JD}) doesn't match 1536. Please create a new Pinecone index with dimension=1536 and update your .env accordingly.")
-                        continue  # Skip this file and continue with the next one
+# ---- SIDEBAR: Admin ----
+st.sidebar.header("Admin Panel")
+admin_uploaded_files = st.sidebar.file_uploader(
+    "Upload PDF or TXT files",
+    type=["pdf", "txt"],
+    accept_multiple_files=True,
+    key="admin_docs_upload"
+)
+index_choice = st.sidebar.selectbox(
+    "Select index to ingest into",
+    (INDEX_RESUME, INDEX_JD),
+    label_visibility="visible"
+)
+if st.sidebar.button("Ingest to Index"):
+    if not admin_uploaded_files:
+        st.sidebar.warning("Please upload at least one file.")
+    else:
+        with st.sidebar.spinner("Ingesting documents..."):
+            total_chunks = 0
+            for uploaded_file in admin_uploaded_files:
+                # Write streamlit UploadedFile to a temporary file
+                suffix = os.path.splitext(uploaded_file.name)[1]
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+                    tmp_file.write(uploaded_file.read())
+                    temp_path = tmp_file.name
 
-                    # Clean up the temporary file
-                    os.remove(temp_path)
-                # Display ingestion summary
-                st.info(f"Ingested a total of {total_chunks} document chunks into the '{index_choice}' index.")
-                # Show index stats
-                stats = (resume_index if index_choice == INDEX_RESUME else jd_index).describe_index_stats()
-                st.write("Current index stats:", stats)
-            st.success("Ingestion complete!")
+                # Use the temp file path for the loader
+                if uploaded_file.name.lower().endswith(".pdf"):
+                    loader = PyPDFLoader(temp_path)
+                else:
+                    loader = TextLoader(temp_path)
 
-    st.markdown("---")
-    st.subheader("Reset Index Contents")
-    reset_target = st.selectbox("Select index to reset", ("Resume Index", "JD Index"))
-    if st.button("Reset Vectors"):
-        with st.spinner("Resetting vectors..."):
-            if reset_target == "Resume Index":
-                resume_index.delete(delete_all=True)
-            else:
-                jd_index.delete(delete_all=True)
-        st.success(f"{reset_target} contents have been deleted.")
+                docs = loader.load()
+                full_text = "\n".join([d.page_content for d in docs])
+                # Extract structured metadata once per resume
+                metadata = extract_resume_metadata(full_text)
+                metadata['source_file'] = uploaded_file.name
+                # Store resume-wide metadata in session_state for recruiter mode
+                if 'resume_metadata' not in st.session_state:
+                    st.session_state['resume_metadata'] = {}
+                st.session_state['resume_metadata'][uploaded_file.name] = metadata
+                splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+                chunks = splitter.split_documents(docs)
+                total_chunks += len(chunks)
+                # Attach metadata to each chunk
+                for chunk in chunks:
+                    if chunk.metadata is None:
+                        chunk.metadata = {}
+                    chunk.metadata.update(metadata)
+                vstore = resume_vstore if index_choice == INDEX_RESUME else jd_vstore
+                try:
+                    vstore.add_documents(chunks)
+                except PineconeApiException as e:
+                    st.sidebar.error(f"Failed to ingest vectors: {e}. This usually means your index dimension ({INDEX_RESUME} or {INDEX_JD}) doesn't match 1536. Please create a new Pinecone index with dimension=1536 and update your .env accordingly.")
+                    continue  # Skip this file and continue with the next one
 
-# Sidebar note
+                # Clean up the temporary file
+                os.remove(temp_path)
+            # Display ingestion summary
+            st.sidebar.info(f"Ingested a total of {total_chunks} document chunks into the '{index_choice}' index.")
+            # Show index stats
+            stats = (resume_index if index_choice == INDEX_RESUME else jd_index).describe_index_stats()
+            st.sidebar.write("Current index stats:", stats)
+        st.sidebar.success("Ingestion complete!")
+
 st.sidebar.markdown("---")
-st.sidebar.info("Ai-Cruiter now uses the Pinecone client & OpenAI API.\nEnsure your .env is correct before running.")
+st.sidebar.subheader("Reset Index Contents")
+reset_target = st.sidebar.selectbox("Select index to reset", ("Resume Index", "JD Index"), key="reset_choice")
+if st.sidebar.button("Reset Vectors"):
+    with st.sidebar.spinner("Resetting vectors..."):
+        if reset_target == "Resume Index":
+            resume_index.delete(delete_all=True)
+        else:
+            jd_index.delete(delete_all=True)
+    st.sidebar.success(f"{reset_target} contents have been deleted.")
