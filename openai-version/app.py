@@ -1,7 +1,14 @@
 import os
+import json
 from dotenv import load_dotenv
 import streamlit as st
-import json
+# --- Load persisted resume metadata from disk ---
+METADATA_PATH = "resume_metadata.json"
+try:
+    with open(METADATA_PATH, "r") as f:
+        st.session_state["resume_metadata"] = json.load(f)
+except FileNotFoundError:
+    st.session_state["resume_metadata"] = {}
 import tempfile
 import pandas as pd
 from pinecone.openapi_support.exceptions import PineconeApiException
@@ -143,24 +150,8 @@ tabs = st.tabs(["🧑‍💼 Recruiter Mode", "👤 Candidate Mode", "📚 Libra
 with tabs[0]:
     st.header("Recruiter Mode")
 
-    # List all uploaded resumes for transparency
-    st.subheader("Uploaded Resumes")
-    resume_meta = st.session_state.get("resume_metadata", {})
-    if resume_meta:
-        for source, meta in resume_meta.items():
-            with st.expander(source):
-                # Display key metadata fields
-                st.markdown(f"- **Skills:** {', '.join(meta.get('skills', []))}")
-                st.markdown(f"- **Tools:** {', '.join(meta.get('tools', []))}")
-                st.markdown(f"- **Experience (yrs):** {meta.get('experience_years', 'N/A')}")
-                if meta.get('education'):
-                    st.markdown(f"- **Education:** {', '.join(meta.get('education', []))}")
-                if meta.get('certifications'):
-                    st.markdown(f"- **Certifications:** {', '.join(meta.get('certifications', []))}")
-    else:
-        st.info("No resumes uploaded yet. Please ingest in the Admin tab.")
 
-    st.markdown("---")
+    # (Removed Uploaded Resumes section and separator)
 
     jd_input = st.text_area("Paste a Job Description (JD):", height=200)
     if st.button("Find Matching Resumes"):
@@ -311,16 +302,12 @@ with tabs[1]:
 with tabs[2]:
     st.header("Library: Uploaded Resumes")
     resume_meta = st.session_state.get("resume_metadata", {})
-    if resume_meta:
-        for source, meta in resume_meta.items():
-            with st.expander(source):
-                st.markdown(f"- **Skills:** {', '.join(meta.get('skills', []))}")
-                st.markdown(f"- **Tools:** {', '.join(meta.get('tools', []))}")
-                st.markdown(f"- **Experience (yrs):** {meta.get('experience_years', 'N/A')}")
-                if meta.get('education'):
-                    st.markdown(f"- **Education:** {', '.join(meta.get('education', []))}")
-                if meta.get('certifications'):
-                    st.markdown(f"- **Certifications:** {', '.join(meta.get('certifications', []))}")
+    count = len(resume_meta)
+    st.write(f"Total resumes uploaded: **{count}**")
+    if count > 0:
+        st.write("**Resume Files:**")
+        for source in resume_meta.keys():
+            st.write(f"- {source}")
     else:
         st.info("No resumes uploaded yet. Please ingest in the sidebar.")
 
@@ -342,7 +329,7 @@ if st.sidebar.button("Ingest to Index"):
     if not admin_uploaded_files:
         st.sidebar.warning("Please upload at least one file.")
     else:
-        with st.sidebar.spinner("Ingesting documents..."):
+        with st.spinner("Ingesting documents..."):
             total_chunks = 0
             for uploaded_file in admin_uploaded_files:
                 # Write streamlit UploadedFile to a temporary file
@@ -366,6 +353,9 @@ if st.sidebar.button("Ingest to Index"):
                 if 'resume_metadata' not in st.session_state:
                     st.session_state['resume_metadata'] = {}
                 st.session_state['resume_metadata'][uploaded_file.name] = metadata
+                # Persist updated metadata to disk
+                with open(METADATA_PATH, "w") as f:
+                    json.dump(st.session_state["resume_metadata"], f)
                 splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
                 chunks = splitter.split_documents(docs)
                 total_chunks += len(chunks)
@@ -394,9 +384,15 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("Reset Index Contents")
 reset_target = st.sidebar.selectbox("Select index to reset", ("Resume Index", "JD Index"), key="reset_choice")
 if st.sidebar.button("Reset Vectors"):
-    with st.sidebar.spinner("Resetting vectors..."):
+    with st.spinner("Resetting vectors..."):
         if reset_target == "Resume Index":
             resume_index.delete(delete_all=True)
+            # Also clear persisted metadata if resetting the resume index
+            st.session_state["resume_metadata"] = {}
+            try:
+                os.remove(METADATA_PATH)
+            except FileNotFoundError:
+                pass
         else:
             jd_index.delete(delete_all=True)
     st.sidebar.success(f"{reset_target} contents have been deleted.")
