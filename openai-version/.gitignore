@@ -1,0 +1,36 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+
+# Virtual environment
+.env/
+.venv/
+ai_env/
+env/
+venv/
+*.env
+
+# PyInstaller
+*.spec
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# VSCode
+.vscode/
+
+# Mac system files
+.DS_Store
+
+# Logs
+*.log
+
+# Streamlit cache
+.streamlit/
+
+# Upload artifacts or temp files
+*.tmp
+*.bak
+resume_metadata.json
