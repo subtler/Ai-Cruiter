@@ -141,36 +141,46 @@ with tabs[0]:
         if not jd_input.strip():
             st.warning("Please paste a Job Description to search.")
         else:
-            results = resume_vstore.similarity_search_with_score(jd_input, k=10)
-            # Build DataFrame
-            data = []
-            for doc, score in results:
-                source = doc.metadata.get('source_file', '')
-                skills = ", ".join(doc.metadata.get('skills', []))
-                tools = ", ".join(doc.metadata.get('tools', []))
-                experience = doc.metadata.get('experience_years', None)
-                data.append({
-                    "Source": source,
-                    "Score": round(score, 4),
-                    "Skills": skills,
-                    "Tools": tools,
-                    "Experience": experience
-                })
-            df = pd.DataFrame(data)
-            st.dataframe(df)
+            with st.spinner("Searching resumes..."):
+                raw_results = resume_vstore.similarity_search_with_score(jd_input, k=50)
+                # Group by source_file
+                grouped = {}
+                for doc, score in raw_results:
+                    source = doc.metadata.get('source_file', 'Unknown')
+                    if source not in grouped:
+                        grouped[source] = {"best_score": score, "chunks": [(doc, score)]}
+                    else:
+                        grouped[source]["chunks"].append((doc, score))
+                        # Update best score if this chunk is better
+                        if score > grouped[source]["best_score"]:
+                            grouped[source]["best_score"] = score
 
-            # Inline expanders for each chunk
-            for doc, score in results:
-                with st.expander(f"{doc.metadata.get('source_file','')} (Score: {score:.4f})"):
-                    st.write(doc.page_content)
+                # Build a list of resumes sorted by best_score
+                entries = sorted(grouped.items(), key=lambda x: x[1]["best_score"], reverse=True)[:10]
 
-            # Shortlist selection
-            sources = df['Source'].tolist()
-            selected = st.multiselect("Shortlist Candidates", options=sources, key="shortlist")
-            if st.button("Save Shortlist", key="save_shortlist"):
-                name = search_name or jd_input[:20]
-                st.session_state['shortlists'][name] = selected
-                st.success(f"Shortlist saved as '{name}'.")
+                # Build DataFrame
+                data = []
+                for source, info in entries:
+                    skills = ", ".join(info["chunks"][0][0].metadata.get('skills', []))
+                    tools = ", ".join(info["chunks"][0][0].metadata.get('tools', []))
+                    exp_years = info["chunks"][0][0].metadata.get('experience_years', None)
+                    data.append({
+                        "Source": source,
+                        "Score": round(info["best_score"], 4),
+                        "Skills": skills,
+                        "Tools": tools,
+                        "Experience": exp_years
+                    })
+                df = pd.DataFrame(data)
+                st.dataframe(df)
+
+                # Inline expanders: show all chunks per resume
+                for source, info in entries:
+                    with st.expander(f"{source} (Best Score: {info['best_score']:.4f})"):
+                        for doc, score in info["chunks"]:
+                            st.write(f"• Score: {score:.4f}")
+                            st.write(doc.page_content)
+                            st.write("---")
 
 # Candidate Mode: generate JD & roles from resume
 from langchain import PromptTemplate
@@ -183,10 +193,22 @@ with tabs[1]:
         if not candidate_file:
             st.warning("Please upload your resume.")
         else:
-            # Load and combine text
-            loader = PyPDFLoader(candidate_file) if candidate_file.name.lower().endswith(".pdf") else TextLoader(candidate_file)
+            # Write UploadedFile to a temp file
+            suffix = os.path.splitext(candidate_file.name)[1]
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(candidate_file.read())
+                temp_path = tmp.name
+
+            # Load and combine text from the temp file
+            if candidate_file.name.lower().endswith(".pdf"):
+                loader = PyPDFLoader(temp_path)
+            else:
+                loader = TextLoader(temp_path)
             docs = loader.load()
             full_text = "\n".join([d.page_content for d in docs])
+
+            # Clean up the temp file
+            os.remove(temp_path)
 
             # Generate using cached function
             output = generate_roles_and_jd(full_text)
@@ -208,7 +230,13 @@ with tabs[2]:
         accept_multiple_files=True,
         key="admin_docs_upload"
     )
-    index_choice = st.selectbox("Select index to ingest into", ("Resume Index", "JD Index"))
+    # Let user pick the actual Pinecone index names from the .env
+    index_choice = st.selectbox(
+        "Select index to ingest into",
+        (INDEX_RESUME, INDEX_JD),
+        label_visibility="visible"
+    )
+    st.write(f"Ingesting into Pinecone index: **{index_choice}**")
     if st.button("Ingest to Index"):
         if not admin_uploaded_files:
             st.warning("Please upload at least one file.")
@@ -241,7 +269,7 @@ with tabs[2]:
                         if chunk.metadata is None:
                             chunk.metadata = {}
                         chunk.metadata.update(metadata)
-                    vstore = resume_vstore if index_choice == "Resume Index" else jd_vstore
+                    vstore = resume_vstore if index_choice == INDEX_RESUME else jd_vstore
                     try:
                         vstore.add_documents(chunks)
                     except PineconeApiException as e:
@@ -253,7 +281,7 @@ with tabs[2]:
                 # Display ingestion summary
                 st.info(f"Ingested a total of {total_chunks} document chunks into the '{index_choice}' index.")
                 # Show index stats
-                stats = (resume_index if index_choice == "Resume Index" else jd_index).describe_index_stats()
+                stats = (resume_index if index_choice == INDEX_RESUME else jd_index).describe_index_stats()
                 st.write("Current index stats:", stats)
             st.success("Ingestion complete!")
 
